@@ -31,10 +31,88 @@ func (li LineItem) TotalCents() int64 {
 	return int64(math.Round(float64(li.UnitPriceCents) * li.Quantity))
 }
 
-var csvHeader = []string{"invoice_id", "line_no", "sku", "description", "qty", "unit_price", "tax_rate", "currency"}
+// csvFields lists the internal field keys in canonical column order. A
+// ColumnMap translates these keys to the actual column names in a given CSV
+// file; with no mapping, the key doubles as the default column name.
+var csvFields = []string{"invoice_id", "line_no", "sku", "description", "qty", "unit_price", "tax_rate", "currency"}
+
+// ColumnMap overrides the CSV column name used for one or more fields, so a
+// source file with different header names (and columns in a different order)
+// than the default format in the README can be read or written without a
+// preprocessing step. Keys are the field names in csvFields; a field with no
+// entry (or a nil map) falls back to using the field name itself as the
+// column name.
+type ColumnMap map[string]string
+
+func (cm ColumnMap) name(field string) string {
+	if cm != nil {
+		if n, ok := cm[field]; ok && n != "" {
+			return n
+		}
+	}
+	return field
+}
+
+// ParseColumnMap parses a "field=Column Name" list, comma-separated, into a
+// ColumnMap. Fields left out of s keep their default name. An empty s
+// returns a nil map, which is equivalent to the default format.
+func ParseColumnMap(s string) (ColumnMap, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+
+	valid := make(map[string]bool, len(csvFields))
+	for _, f := range csvFields {
+		valid[f] = true
+	}
+
+	cm := make(ColumnMap)
+	for _, pair := range strings.Split(s, ",") {
+		field, name, hasEquals := strings.Cut(pair, "=")
+		field = strings.TrimSpace(field)
+		name = strings.TrimSpace(name)
+		if !hasEquals || field == "" || name == "" {
+			return nil, fmt.Errorf("invalid column mapping %q: expected field=Column Name", pair)
+		}
+		if !valid[field] {
+			return nil, fmt.Errorf("invalid column mapping %q: unknown field %q (want one of %v)", pair, field, csvFields)
+		}
+		cm[field] = name
+	}
+	return cm, nil
+}
+
+// columnIndexes maps each internal field key to its column position in a CSV
+// header, using colMap to translate field keys to the actual column names to
+// look for. It's what lets input columns be reordered or renamed instead of
+// having to appear in the fixed default order.
+func columnIndexes(header []string, colMap ColumnMap) (map[string]int, error) {
+	positions := make(map[string]int, len(header))
+	for i, name := range header {
+		positions[name] = i
+	}
+
+	idx := make(map[string]int, len(csvFields))
+	for _, field := range csvFields {
+		name := colMap.name(field)
+		pos, ok := positions[name]
+		if !ok {
+			return nil, fmt.Errorf("csv header is missing column %q (for field %q)", name, field)
+		}
+		idx[field] = pos
+	}
+	return idx, nil
+}
 
 // ParseCSV reads the flat CSV export format described in the README.
 func ParseCSV(r io.Reader) ([]LineItem, error) {
+	return ParseCSVWithColumns(r, nil)
+}
+
+// ParseCSVWithColumns is ParseCSV with a custom column mapping. A nil colMap
+// is equivalent to ParseCSV.
+func ParseCSVWithColumns(r io.Reader, colMap ColumnMap) ([]LineItem, error) {
 	cr := csv.NewReader(r)
 	cr.FieldsPerRecord = -1 // checked manually below so the error names the bad row
 	records, err := cr.ReadAll()
@@ -44,64 +122,66 @@ func ParseCSV(r io.Reader) ([]LineItem, error) {
 	if len(records) == 0 {
 		return nil, nil
 	}
-	if !equalHeader(records[0], csvHeader) {
-		return nil, fmt.Errorf("unexpected csv header: got %v, want %v", records[0], csvHeader)
+
+	idx, err := columnIndexes(records[0], colMap)
+	if err != nil {
+		return nil, err
 	}
+	width := len(records[0])
 
 	items := make([]LineItem, 0, len(records)-1)
 	for i, row := range records[1:] {
 		rowNum := i + 2 // 1-indexed, plus the header row
-		if len(row) != len(csvHeader) {
-			return nil, fmt.Errorf("row %d: expected %d fields, got %d", rowNum, len(csvHeader), len(row))
+		if len(row) != width {
+			return nil, fmt.Errorf("row %d: expected %d fields, got %d", rowNum, width, len(row))
 		}
 
-		lineNo, err := strconv.Atoi(strings.TrimSpace(row[1]))
+		lineNo, err := strconv.Atoi(strings.TrimSpace(row[idx["line_no"]]))
 		if err != nil {
-			return nil, fmt.Errorf("row %d: invalid line_no %q: %w", rowNum, row[1], err)
+			return nil, fmt.Errorf("row %d: invalid line_no %q: %w", rowNum, row[idx["line_no"]], err)
 		}
-		qty, err := strconv.ParseFloat(strings.TrimSpace(row[4]), 64)
+		qty, err := strconv.ParseFloat(strings.TrimSpace(row[idx["qty"]]), 64)
 		if err != nil {
-			return nil, fmt.Errorf("row %d: invalid qty %q: %w", rowNum, row[4], err)
+			return nil, fmt.Errorf("row %d: invalid qty %q: %w", rowNum, row[idx["qty"]], err)
 		}
-		unitPriceCents, err := parseDecimalTo2Places(row[5])
+		unitPriceCents, err := parseDecimalTo2Places(row[idx["unit_price"]])
 		if err != nil {
-			return nil, fmt.Errorf("row %d: invalid unit_price %q: %w", rowNum, row[5], err)
+			return nil, fmt.Errorf("row %d: invalid unit_price %q: %w", rowNum, row[idx["unit_price"]], err)
 		}
-		taxRateBps, err := parseDecimalTo2Places(row[6])
+		taxRateBps, err := parseDecimalTo2Places(row[idx["tax_rate"]])
 		if err != nil {
-			return nil, fmt.Errorf("row %d: invalid tax_rate %q: %w", rowNum, row[6], err)
+			return nil, fmt.Errorf("row %d: invalid tax_rate %q: %w", rowNum, row[idx["tax_rate"]], err)
 		}
 
 		items = append(items, LineItem{
-			InvoiceID:      strings.TrimSpace(row[0]),
+			InvoiceID:      strings.TrimSpace(row[idx["invoice_id"]]),
 			LineNo:         lineNo,
-			SKU:            strings.TrimSpace(row[2]),
-			Description:    row[3],
+			SKU:            strings.TrimSpace(row[idx["sku"]]),
+			Description:    row[idx["description"]],
 			Quantity:       qty,
 			UnitPriceCents: unitPriceCents,
 			TaxRateBps:     taxRateBps,
-			Currency:       strings.ToUpper(strings.TrimSpace(row[7])),
+			Currency:       strings.ToUpper(strings.TrimSpace(row[idx["currency"]])),
 		})
 	}
 	return items, nil
 }
 
-func equalHeader(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
 // WriteCSV writes items back out in the flat CSV export format.
 func WriteCSV(w io.Writer, items []LineItem) error {
+	return WriteCSVWithColumns(w, items, nil)
+}
+
+// WriteCSVWithColumns is WriteCSV with a custom column mapping, used to name
+// (and, since csvFields fixes the order, still order) the header. A nil
+// colMap is equivalent to WriteCSV.
+func WriteCSVWithColumns(w io.Writer, items []LineItem, colMap ColumnMap) error {
 	cw := csv.NewWriter(w)
-	if err := cw.Write(csvHeader); err != nil {
+	header := make([]string, len(csvFields))
+	for i, field := range csvFields {
+		header[i] = colMap.name(field)
+	}
+	if err := cw.Write(header); err != nil {
 		return err
 	}
 	for _, li := range items {
@@ -268,9 +348,10 @@ func Flatten(invoices []Invoice) []LineItem {
 	return items
 }
 
-// CSVToJSON reads CSV from r and writes the grouped JSON format to w.
-func CSVToJSON(r io.Reader, w io.Writer) error {
-	items, err := ParseCSV(r)
+// CSVToJSON reads CSV from r and writes the grouped JSON format to w. A nil
+// colMap uses the default column names described in the README.
+func CSVToJSON(r io.Reader, w io.Writer, colMap ColumnMap) error {
+	items, err := ParseCSVWithColumns(r, colMap)
 	if err != nil {
 		return err
 	}
@@ -279,11 +360,12 @@ func CSVToJSON(r io.Reader, w io.Writer) error {
 	return enc.Encode(GroupByInvoice(items))
 }
 
-// JSONToCSV reads the grouped JSON format from r and writes CSV to w.
-func JSONToCSV(r io.Reader, w io.Writer) error {
+// JSONToCSV reads the grouped JSON format from r and writes CSV to w. A nil
+// colMap uses the default column names described in the README.
+func JSONToCSV(r io.Reader, w io.Writer, colMap ColumnMap) error {
 	var invoices []Invoice
 	if err := json.NewDecoder(r).Decode(&invoices); err != nil {
 		return fmt.Errorf("reading json: %w", err)
 	}
-	return WriteCSV(w, Flatten(invoices))
+	return WriteCSVWithColumns(w, Flatten(invoices), colMap)
 }

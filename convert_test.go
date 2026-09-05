@@ -110,6 +110,79 @@ INV-2,1,SKU-4,Café subscription — Q3,0,49,8.5,USD
 	}
 }
 
+func TestParseCSVWithColumnsCustomNames(t *testing.T) {
+	colMap, err := ParseColumnMap("invoice_id=Invoice Number,line_no=Line,sku=Item,unit_price=Amount,tax_rate=Tax %")
+	if err != nil {
+		t.Fatalf("ParseColumnMap: %v", err)
+	}
+
+	input := "Invoice Number,Line,Item,description,qty,Amount,Tax %,currency\n" +
+		"INV-1,1,SKU-1,Widget,2,19.99,7.25,USD\n"
+	items, err := ParseCSVWithColumns(strings.NewReader(input), colMap)
+	if err != nil {
+		t.Fatalf("ParseCSVWithColumns: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("got %d items, want 1", len(items))
+	}
+	if got, want := items[0].InvoiceID, "INV-1"; got != want {
+		t.Errorf("invoice_id = %q, want %q", got, want)
+	}
+	if got, want := items[0].UnitPriceCents, int64(1999); got != want {
+		t.Errorf("unit_price (from Amount column) = %d, want %d", got, want)
+	}
+}
+
+func TestParseCSVReorderedDefaultColumns(t *testing.T) {
+	input := "currency,qty,invoice_id,line_no,sku,description,unit_price,tax_rate\n" +
+		"USD,2,INV-1,1,SKU-1,Widget,19.99,7.25\n"
+	items, err := ParseCSV(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("ParseCSV: %v", err)
+	}
+	if len(items) != 1 || items[0].InvoiceID != "INV-1" || items[0].UnitPriceCents != 1999 {
+		t.Fatalf("got %+v, want a single INV-1 item with unit_price_cents 1999", items)
+	}
+}
+
+func TestParseColumnMapErrors(t *testing.T) {
+	cases := []string{
+		"invoice_id",        // missing '='
+		"unknown_field=Foo", // not a recognized field
+		"invoice_id=",       // empty column name
+		"=Invoice Number",   // empty field
+	}
+	for _, in := range cases {
+		if _, err := ParseColumnMap(in); err == nil {
+			t.Errorf("ParseColumnMap(%q): expected error, got nil", in)
+		}
+	}
+}
+
+func TestWriteCSVWithColumnsCustomHeader(t *testing.T) {
+	colMap, err := ParseColumnMap("invoice_id=Invoice Number,unit_price=Amount")
+	if err != nil {
+		t.Fatalf("ParseColumnMap: %v", err)
+	}
+
+	items := []LineItem{{InvoiceID: "INV-1", LineNo: 1, SKU: "SKU-1", Description: "Widget", Quantity: 2, UnitPriceCents: 1999, TaxRateBps: 725, Currency: "USD"}}
+	var buf bytes.Buffer
+	if err := WriteCSVWithColumns(&buf, items, colMap); err != nil {
+		t.Fatalf("WriteCSVWithColumns: %v", err)
+	}
+	if !strings.HasPrefix(buf.String(), "Invoice Number,line_no,sku,description,qty,Amount,tax_rate,currency\n") {
+		t.Fatalf("unexpected header, got:\n%s", buf.String())
+	}
+
+	roundTripped, err := ParseCSVWithColumns(&buf, colMap)
+	if err != nil {
+		t.Fatalf("round trip ParseCSVWithColumns: %v", err)
+	}
+	if len(roundTripped) != 1 || roundTripped[0].InvoiceID != "INV-1" || roundTripped[0].UnitPriceCents != 1999 {
+		t.Fatalf("round trip mismatch: got %+v", roundTripped)
+	}
+}
+
 func TestParseCSVRowLengthMismatch(t *testing.T) {
 	input := "invoice_id,line_no,sku,description,qty,unit_price,tax_rate,currency\n" +
 		"INV-1,1,SKU-1,Widget,2,19.99\n"
@@ -165,7 +238,7 @@ func TestCSVToJSONToCSV(t *testing.T) {
 		"INV-1,1,SKU-1,Widget,2,19.99,7.25,USD\n"
 
 	var jsonBuf bytes.Buffer
-	if err := CSVToJSON(strings.NewReader(input), &jsonBuf); err != nil {
+	if err := CSVToJSON(strings.NewReader(input), &jsonBuf, nil); err != nil {
 		t.Fatalf("CSVToJSON: %v", err)
 	}
 	if !strings.Contains(jsonBuf.String(), `"total_cents": 3998`) {
@@ -173,7 +246,7 @@ func TestCSVToJSONToCSV(t *testing.T) {
 	}
 
 	var csvBuf bytes.Buffer
-	if err := JSONToCSV(&jsonBuf, &csvBuf); err != nil {
+	if err := JSONToCSV(&jsonBuf, &csvBuf, nil); err != nil {
 		t.Fatalf("JSONToCSV: %v", err)
 	}
 	if !strings.Contains(csvBuf.String(), "INV-1,1,SKU-1,Widget,2,19.99,7.25,USD") {

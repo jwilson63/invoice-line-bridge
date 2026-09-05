@@ -23,6 +23,19 @@ INV-1001,2,SKU-200,Late fee,1,25.00,0,USD
 treated as 0. `qty` can be negative for credits and returns, and can be
 fractional (hours, weight, partial units).
 
+Columns can appear in any order, as long as the header names match. If your
+CSV export uses different header names, pass `-csv-columns` to map them:
+
+```
+./linebridge -in export.csv -out invoices.json \
+  -csv-columns "invoice_id=Invoice Number,unit_price=Amount,tax_rate=Tax %"
+```
+
+Only the fields you list need mapping; anything left out keeps its default
+name (`invoice_id`, `line_no`, `sku`, `description`, `qty`, `unit_price`,
+`tax_rate`, `currency`). The same mapping applies to CSV output, so it can
+also be used to write a CSV with a different header.
+
 ## JSON format
 
 ```json
@@ -68,8 +81,10 @@ round the same way when parsed.
 
 ## Status
 
-Early. The CSV header is fixed for now — no column reordering or custom field
-mapping yet.
+Early. Columns can be reordered or renamed (see `-csv-columns` above), but
+every field is still required — there's no support yet for a CSV that's
+missing a column entirely (e.g. no `tax_rate` column at all, rather than a
+blank one).
 
 ## License
 

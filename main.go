@@ -12,7 +12,13 @@ func main() {
 	toFlag := flag.String("to", "", "output format: csv or json (default: inferred from -out's extension)")
 	inPath := flag.String("in", "", "input file (default: stdin)")
 	outPath := flag.String("out", "", "output file (default: stdout)")
+	csvColumns := flag.String("csv-columns", "", `override CSV column names, e.g. "invoice_id=Invoice Number,unit_price=Amount" (default: names in README, in any order)`)
 	flag.Parse()
+
+	colMap, err := ParseColumnMap(*csvColumns)
+	if err != nil {
+		fail(err)
+	}
 
 	in := os.Stdin
 	if *inPath != "" {
@@ -46,12 +52,11 @@ func main() {
 		fail(fmt.Errorf("specify -from/-to, or use -in/-out with .csv/.json extensions"))
 	}
 
-	var err error
 	switch {
 	case from == "csv" && to == "json":
-		err = CSVToJSON(in, out)
+		err = CSVToJSON(in, out, colMap)
 	case from == "json" && to == "csv":
-		err = JSONToCSV(in, out)
+		err = JSONToCSV(in, out, colMap)
 	case from == to:
 		err = fmt.Errorf("input and output format are both %q, nothing to convert", from)
 	default:
