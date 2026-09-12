@@ -13,6 +13,7 @@ func main() {
 	inPath := flag.String("in", "", "input file (default: stdin)")
 	outPath := flag.String("out", "", "output file (default: stdout)")
 	csvColumns := flag.String("csv-columns", "", `override CSV column names, e.g. "invoice_id=Invoice Number,unit_price=Amount" (default: names in README, in any order)`)
+	validate := flag.Bool("validate", false, "check -in for errors and exit, without converting or writing -out")
 	flag.Parse()
 
 	colMap, err := ParseColumnMap(*csvColumns)
@@ -30,6 +31,22 @@ func main() {
 		in = f
 	}
 
+	from := *fromFlag
+	if from == "" {
+		from = formatFromPath(*inPath)
+	}
+
+	if *validate {
+		if from == "" {
+			fail(fmt.Errorf("specify -from, or use -in with a .csv/.json extension"))
+		}
+		if err := Validate(in, from, colMap); err != nil {
+			fail(err)
+		}
+		fmt.Println("ok")
+		return
+	}
+
 	out := os.Stdout
 	if *outPath != "" {
 		f, err := os.Create(*outPath)
@@ -40,10 +57,6 @@ func main() {
 		out = f
 	}
 
-	from := *fromFlag
-	if from == "" {
-		from = formatFromPath(*inPath)
-	}
 	to := *toFlag
 	if to == "" {
 		to = formatFromPath(*outPath)

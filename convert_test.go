@@ -233,6 +233,48 @@ INV-200,1,SKU-3,Only item,1,100,10,EUR
 	}
 }
 
+func TestValidateCatchesDuplicateLineNo(t *testing.T) {
+	input := "invoice_id,line_no,sku,description,qty,unit_price,tax_rate,currency\n" +
+		"INV-1,1,SKU-1,Widget,2,19.99,7.25,USD\n" +
+		"INV-1,1,SKU-2,Duplicate line_no,1,5,0,USD\n"
+	if err := Validate(strings.NewReader(input), "csv", nil); err == nil {
+		t.Fatal("expected error for duplicate line_no within an invoice, got nil")
+	}
+}
+
+func TestValidateCatchesEmptyInvoiceID(t *testing.T) {
+	input := "invoice_id,line_no,sku,description,qty,unit_price,tax_rate,currency\n" +
+		",1,SKU-1,Widget,2,19.99,7.25,USD\n"
+	if err := Validate(strings.NewReader(input), "csv", nil); err == nil {
+		t.Fatal("expected error for empty invoice_id, got nil")
+	}
+}
+
+func TestValidateAcceptsSameLineNoAcrossDifferentInvoices(t *testing.T) {
+	input := "invoice_id,line_no,sku,description,qty,unit_price,tax_rate,currency\n" +
+		"INV-1,1,SKU-1,Widget,2,19.99,7.25,USD\n" +
+		"INV-2,1,SKU-2,Widget,1,5,0,USD\n"
+	if err := Validate(strings.NewReader(input), "csv", nil); err != nil {
+		t.Fatalf("Validate: unexpected error: %v", err)
+	}
+}
+
+func TestValidateJSON(t *testing.T) {
+	input := `[{"invoice_id":"INV-1","line_items":[
+		{"line_no":1,"sku":"SKU-1","quantity":1,"unit_price_cents":100},
+		{"line_no":1,"sku":"SKU-2","quantity":1,"unit_price_cents":200}
+	]}]`
+	if err := Validate(strings.NewReader(input), "json", nil); err == nil {
+		t.Fatal("expected error for duplicate line_no, got nil")
+	}
+}
+
+func TestValidateUnsupportedFormat(t *testing.T) {
+	if err := Validate(strings.NewReader(""), "xml", nil); err == nil {
+		t.Fatal("expected error for unsupported format, got nil")
+	}
+}
+
 func TestCSVToJSONToCSV(t *testing.T) {
 	input := "invoice_id,line_no,sku,description,qty,unit_price,tax_rate,currency\n" +
 		"INV-1,1,SKU-1,Widget,2,19.99,7.25,USD\n"

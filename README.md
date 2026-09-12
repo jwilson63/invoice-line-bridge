@@ -73,6 +73,15 @@ go build -o linebridge .
 cat invoices.csv | ./linebridge -from csv -to json > invoices.json
 ```
 
+Use `-validate` to check a file for errors without converting it. It parses
+`-in` (or stdin, with `-from`) and checks every line item's `invoice_id` is
+non-empty and that `line_no` is unique within its invoice, then exits 0 and
+prints `ok`, or exits 1 with an error describing the first problem found.
+
+```
+./linebridge -in invoices.csv -validate
+```
+
 ## Rounding
 
 A line's total is `quantity * unit_price`, rounded to the nearest cent, half

@@ -360,12 +360,66 @@ func CSVToJSON(r io.Reader, w io.Writer, colMap ColumnMap) error {
 	return enc.Encode(GroupByInvoice(items))
 }
 
+// ParseJSON reads the grouped JSON format described in the README.
+func ParseJSON(r io.Reader) ([]Invoice, error) {
+	var invoices []Invoice
+	if err := json.NewDecoder(r).Decode(&invoices); err != nil {
+		return nil, fmt.Errorf("reading json: %w", err)
+	}
+	return invoices, nil
+}
+
 // JSONToCSV reads the grouped JSON format from r and writes CSV to w. A nil
 // colMap uses the default column names described in the README.
 func JSONToCSV(r io.Reader, w io.Writer, colMap ColumnMap) error {
-	var invoices []Invoice
-	if err := json.NewDecoder(r).Decode(&invoices); err != nil {
-		return fmt.Errorf("reading json: %w", err)
+	invoices, err := ParseJSON(r)
+	if err != nil {
+		return err
 	}
 	return WriteCSVWithColumns(w, Flatten(invoices), colMap)
+}
+
+// ValidateItems checks flat line items for problems that parsing alone won't
+// catch: every line needs an invoice to belong to, and line_no is only
+// meaningful as an ordering/reference key if it's unique within its invoice.
+func ValidateItems(items []LineItem) error {
+	seen := make(map[string]map[int]bool)
+	for _, li := range items {
+		if li.InvoiceID == "" {
+			return fmt.Errorf("line %d: empty invoice_id", li.LineNo)
+		}
+		lines, ok := seen[li.InvoiceID]
+		if !ok {
+			lines = make(map[int]bool)
+			seen[li.InvoiceID] = lines
+		}
+		if lines[li.LineNo] {
+			return fmt.Errorf("invoice %s: duplicate line_no %d", li.InvoiceID, li.LineNo)
+		}
+		lines[li.LineNo] = true
+	}
+	return nil
+}
+
+// Validate parses r as the given format ("csv" or "json") and checks it with
+// ValidateItems, without writing any output.
+func Validate(r io.Reader, format string, colMap ColumnMap) error {
+	var items []LineItem
+	switch format {
+	case "csv":
+		parsed, err := ParseCSVWithColumns(r, colMap)
+		if err != nil {
+			return err
+		}
+		items = parsed
+	case "json":
+		invoices, err := ParseJSON(r)
+		if err != nil {
+			return err
+		}
+		items = Flatten(invoices)
+	default:
+		return fmt.Errorf("unsupported format for -validate: %s", format)
+	}
+	return ValidateItems(items)
 }
