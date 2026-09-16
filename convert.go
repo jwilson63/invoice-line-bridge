@@ -36,6 +36,18 @@ func (li LineItem) TotalCents() int64 {
 // file; with no mapping, the key doubles as the default column name.
 var csvFields = []string{"invoice_id", "line_no", "sku", "description", "qty", "unit_price", "tax_rate", "currency"}
 
+// optionalCSVFields lists fields that can be left out of a CSV header
+// entirely (not just left blank per row), because they have a sensible zero
+// value: an empty description, an untaxed line, or an unspecified currency.
+// invoice_id, line_no, sku, qty, and unit_price have no such default, so a
+// source file missing one of those is a real error rather than something to
+// paper over.
+var optionalCSVFields = map[string]bool{
+	"description": true,
+	"tax_rate":    true,
+	"currency":    true,
+}
+
 // ColumnMap overrides the CSV column name used for one or more fields, so a
 // source file with different header names (and columns in a different order)
 // than the default format in the README can be read or written without a
@@ -86,7 +98,9 @@ func ParseColumnMap(s string) (ColumnMap, error) {
 // columnIndexes maps each internal field key to its column position in a CSV
 // header, using colMap to translate field keys to the actual column names to
 // look for. It's what lets input columns be reordered or renamed instead of
-// having to appear in the fixed default order.
+// having to appear in the fixed default order. A field in optionalCSVFields
+// that has no matching column gets index -1 instead of an error, meaning
+// every row should use that field's zero value.
 func columnIndexes(header []string, colMap ColumnMap) (map[string]int, error) {
 	positions := make(map[string]int, len(header))
 	for i, name := range header {
@@ -98,6 +112,10 @@ func columnIndexes(header []string, colMap ColumnMap) (map[string]int, error) {
 		name := colMap.name(field)
 		pos, ok := positions[name]
 		if !ok {
+			if optionalCSVFields[field] {
+				idx[field] = -1
+				continue
+			}
 			return nil, fmt.Errorf("csv header is missing column %q (for field %q)", name, field)
 		}
 		idx[field] = pos
@@ -148,20 +166,34 @@ func ParseCSVWithColumns(r io.Reader, colMap ColumnMap) ([]LineItem, error) {
 		if err != nil {
 			return nil, fmt.Errorf("row %d: invalid unit_price %q: %w", rowNum, row[idx["unit_price"]], err)
 		}
-		taxRateBps, err := parseDecimalTo2Places(row[idx["tax_rate"]])
-		if err != nil {
-			return nil, fmt.Errorf("row %d: invalid tax_rate %q: %w", rowNum, row[idx["tax_rate"]], err)
+
+		var taxRateBps int64
+		if i := idx["tax_rate"]; i >= 0 {
+			taxRateBps, err = parseDecimalTo2Places(row[i])
+			if err != nil {
+				return nil, fmt.Errorf("row %d: invalid tax_rate %q: %w", rowNum, row[i], err)
+			}
+		}
+
+		var description string
+		if i := idx["description"]; i >= 0 {
+			description = row[i]
+		}
+
+		var currency string
+		if i := idx["currency"]; i >= 0 {
+			currency = strings.ToUpper(strings.TrimSpace(row[i]))
 		}
 
 		items = append(items, LineItem{
 			InvoiceID:      strings.TrimSpace(row[idx["invoice_id"]]),
 			LineNo:         lineNo,
 			SKU:            strings.TrimSpace(row[idx["sku"]]),
-			Description:    row[idx["description"]],
+			Description:    description,
 			Quantity:       qty,
 			UnitPriceCents: unitPriceCents,
 			TaxRateBps:     taxRateBps,
-			Currency:       strings.ToUpper(strings.TrimSpace(row[idx["currency"]])),
+			Currency:       currency,
 		})
 	}
 	return items, nil

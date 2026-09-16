@@ -36,6 +36,12 @@ name (`invoice_id`, `line_no`, `sku`, `description`, `qty`, `unit_price`,
 `tax_rate`, `currency`). The same mapping applies to CSV output, so it can
 also be used to write a CSV with a different header.
 
+`description`, `tax_rate`, and `currency` can be left out of the header
+entirely, not just blank per row, if a source export doesn't have them at
+all. Missing `description` reads as `""`, missing `tax_rate` as `0`, and
+missing `currency` as `""`. `invoice_id`, `line_no`, `sku`, `qty`, and
+`unit_price` have no such default and must always be present.
+
 ## JSON format
 
 ```json
@@ -90,10 +96,10 @@ round the same way when parsed.
 
 ## Status
 
-Early. Columns can be reordered or renamed (see `-csv-columns` above), but
-every field is still required — there's no support yet for a CSV that's
-missing a column entirely (e.g. no `tax_rate` column at all, rather than a
-blank one).
+Early. Columns can be reordered or renamed (see `-csv-columns` above), and
+`description`, `tax_rate`, and `currency` can be missing from the header
+entirely. `invoice_id`, `line_no`, `sku`, `qty`, and `unit_price` are always
+required.
 
 ## License
 

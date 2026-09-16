@@ -183,6 +183,38 @@ func TestWriteCSVWithColumnsCustomHeader(t *testing.T) {
 	}
 }
 
+func TestParseCSVMissingOptionalColumns(t *testing.T) {
+	input := "invoice_id,line_no,sku,qty,unit_price\n" +
+		"INV-1,1,SKU-1,2,19.99\n"
+	items, err := ParseCSV(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("ParseCSV: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("got %d items, want 1", len(items))
+	}
+	got := items[0]
+	if got.Description != "" {
+		t.Errorf("description = %q, want empty (no such column)", got.Description)
+	}
+	if got.TaxRateBps != 0 {
+		t.Errorf("tax_rate_bps = %d, want 0 (no such column)", got.TaxRateBps)
+	}
+	if got.Currency != "" {
+		t.Errorf("currency = %q, want empty (no such column)", got.Currency)
+	}
+	if got.UnitPriceCents != 1999 {
+		t.Errorf("unit_price_cents = %d, want 1999", got.UnitPriceCents)
+	}
+}
+
+func TestParseCSVMissingRequiredColumn(t *testing.T) {
+	input := "line_no,sku,qty,unit_price\n1,SKU-1,2,19.99\n"
+	if _, err := ParseCSV(strings.NewReader(input)); err == nil {
+		t.Fatal("expected error for missing invoice_id column, got nil")
+	}
+}
+
 func TestParseCSVRowLengthMismatch(t *testing.T) {
 	input := "invoice_id,line_no,sku,description,qty,unit_price,tax_rate,currency\n" +
 		"INV-1,1,SKU-1,Widget,2,19.99\n"
