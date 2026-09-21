@@ -48,6 +48,9 @@ missing `currency` as `""`. `invoice_id`, `line_no`, `sku`, `qty`, and
 [
   {
     "invoice_id": "INV-1001",
+    "subtotal_cents": 120000,
+    "tax_cents": 8700,
+    "total_cents": 128700,
     "line_items": [
       {
         "line_no": 1,
@@ -66,6 +69,14 @@ missing `currency` as `""`. `invoice_id`, `line_no`, `sku`, `qty`, and
 
 Money is stored as integer cents and tax rates as integer basis points (1/100th
 of a percent) so nothing downstream has to do float comparisons on currency.
+
+`subtotal_cents` and `tax_cents` are the sums of each line's `total_cents` and
+per-line tax (`total_cents * tax_rate_bps / 10000`, same rounding as
+`total_cents`); `total_cents` at the invoice level is their sum. These are
+computed on the way to JSON and don't round-trip back into the CSV — a CSV
+row has no place to put an invoice-level total, so converting JSON back to
+CSV recomputes it from the line items on the next pass instead of trusting a
+stale value.
 
 ## Usage
 

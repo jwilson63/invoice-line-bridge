@@ -307,6 +307,67 @@ func TestValidateUnsupportedFormat(t *testing.T) {
 	}
 }
 
+func TestGroupByInvoiceComputesSubtotalAndTax(t *testing.T) {
+	input := `invoice_id,line_no,sku,description,qty,unit_price,tax_rate,currency
+INV-1,1,SKU-1,First item,2,100,10,USD
+INV-1,2,SKU-2,Second item,1,50,0,USD
+INV-2,1,SKU-3,Only item,3,10,5,USD
+`
+	items, err := ParseCSV(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("ParseCSV: %v", err)
+	}
+	invoices := GroupByInvoice(items)
+	if len(invoices) != 2 {
+		t.Fatalf("got %d invoices, want 2", len(invoices))
+	}
+
+	inv1 := invoices[0]
+	if inv1.SubtotalCents != 25000 {
+		t.Errorf("INV-1 subtotal_cents = %d, want 25000", inv1.SubtotalCents)
+	}
+	if inv1.TaxCents != 2000 {
+		t.Errorf("INV-1 tax_cents = %d, want 2000", inv1.TaxCents)
+	}
+	if inv1.TotalCents != 27000 {
+		t.Errorf("INV-1 total_cents = %d, want 27000", inv1.TotalCents)
+	}
+
+	inv2 := invoices[1]
+	if inv2.SubtotalCents != 3000 {
+		t.Errorf("INV-2 subtotal_cents = %d, want 3000", inv2.SubtotalCents)
+	}
+	if inv2.TaxCents != 150 {
+		t.Errorf("INV-2 tax_cents = %d, want 150", inv2.TaxCents)
+	}
+	if inv2.TotalCents != 3150 {
+		t.Errorf("INV-2 total_cents = %d, want 3150", inv2.TotalCents)
+	}
+}
+
+func TestLineItemTaxCents(t *testing.T) {
+	cases := []struct {
+		name           string
+		unitPriceCents int64
+		qty            float64
+		taxRateBps     int64
+		want           int64
+	}{
+		{"no tax", 1000, 1, 0, 0},
+		{"7.25 percent", 15000, 8, 725, 8700},
+		{"rounds half up", 100, 1, 50, 1},
+		{"negative total (credit) taxed same as positive", -1000, 1, 1000, -100},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			li := LineItem{UnitPriceCents: c.unitPriceCents, Quantity: c.qty, TaxRateBps: c.taxRateBps}
+			if got := li.TaxCents(); got != c.want {
+				t.Fatalf("TaxCents() = %d, want %d", got, c.want)
+			}
+		})
+	}
+}
+
 func TestCSVToJSONToCSV(t *testing.T) {
 	input := "invoice_id,line_no,sku,description,qty,unit_price,tax_rate,currency\n" +
 		"INV-1,1,SKU-1,Widget,2,19.99,7.25,USD\n"

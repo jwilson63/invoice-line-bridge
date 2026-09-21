@@ -31,6 +31,13 @@ func (li LineItem) TotalCents() int64 {
 	return int64(math.Round(float64(li.UnitPriceCents) * li.Quantity))
 }
 
+// TaxCents is TotalCents times the tax rate, rounded to the nearest cent,
+// half away from zero. Basis points are 1/100th of a percent, so dividing by
+// 10000 (not 100) converts them back to a fraction.
+func (li LineItem) TaxCents() int64 {
+	return int64(math.Round(float64(li.TotalCents()) * float64(li.TaxRateBps) / 10000))
+}
+
 // csvFields lists the internal field keys in canonical column order. A
 // ColumnMap translates these keys to the actual column names in a given CSV
 // file; with no mapping, the key doubles as the default column name.
@@ -311,8 +318,11 @@ func formatDecimalFrom2Places(v int64) string {
 // Invoice and JSONLineItem are the grouped JSON representation described in
 // the README.
 type Invoice struct {
-	InvoiceID string         `json:"invoice_id"`
-	LineItems []JSONLineItem `json:"line_items"`
+	InvoiceID     string         `json:"invoice_id"`
+	SubtotalCents int64          `json:"subtotal_cents"`
+	TaxCents      int64          `json:"tax_cents"`
+	TotalCents    int64          `json:"total_cents"`
+	LineItems     []JSONLineItem `json:"line_items"`
 }
 
 type JSONLineItem struct {
@@ -343,7 +353,10 @@ func GroupByInvoice(items []LineItem) []Invoice {
 	for _, id := range order {
 		lines := byInvoice[id]
 		jsonLines := make([]JSONLineItem, len(lines))
+		var subtotal, tax int64
 		for i, li := range lines {
+			lineTotal := li.TotalCents()
+			lineTax := li.TaxCents()
 			jsonLines[i] = JSONLineItem{
 				LineNo:         li.LineNo,
 				SKU:            li.SKU,
@@ -352,10 +365,18 @@ func GroupByInvoice(items []LineItem) []Invoice {
 				UnitPriceCents: li.UnitPriceCents,
 				TaxRateBps:     li.TaxRateBps,
 				Currency:       li.Currency,
-				TotalCents:     li.TotalCents(),
+				TotalCents:     lineTotal,
 			}
+			subtotal += lineTotal
+			tax += lineTax
 		}
-		invoices = append(invoices, Invoice{InvoiceID: id, LineItems: jsonLines})
+		invoices = append(invoices, Invoice{
+			InvoiceID:     id,
+			SubtotalCents: subtotal,
+			TaxCents:      tax,
+			TotalCents:    subtotal + tax,
+			LineItems:     jsonLines,
+		})
 	}
 	return invoices
 }
